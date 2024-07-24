@@ -332,36 +332,51 @@ async def ev(interaction: discord.Interaction, market_odds: str, fair_odds: int 
     kelly='Set Kelly Criterion type (FK, HK, QK, EK)',
     devig_method='Set devig method (wc, power, probit, tko, or goto)'
 )
-async def settings(interaction: discord.Interaction, bankroll: float = None, toggle_bankroll: bool = None, kelly: KellyType = None, devig_method: DevigMethod = None):
-    user_id = str(interaction.user.id)
-    user_settings = user_data.get(user_id, {})
-
-    if bankroll is not None:
-        user_settings["bankroll"] = bankroll
+async def settings(interaction: discord.Interaction, bankroll: float = None, toggle_bankroll: bool = None, kelly: str = None, devig_method: str = None):
+    await interaction.response.defer(ephemeral=True)
     
-    if toggle_bankroll is not None:
-        user_settings["bankroll_enabled"] = toggle_bankroll
+    try:
+        user_id = str(interaction.user.id)
+        user_settings = user_data.get(user_id, {})
 
-    if kelly is not None:
-        user_settings["kelly"] = kelly.name
+        if bankroll is not None:
+            user_settings["bankroll"] = bankroll
+        
+        if toggle_bankroll is not None:
+            user_settings["bankroll_enabled"] = toggle_bankroll
 
-    if devig_method is not None:
-        user_settings["devig_method"] = devig_method.value
+        if kelly is not None:
+            if kelly in KellyType.__members__:
+                user_settings["kelly"] = kelly
+            else:
+                await interaction.followup.send(f"Invalid Kelly type: {kelly}. Valid options are: {', '.join(KellyType.__members__.keys())}", ephemeral=True)
+                return
 
-    user_data[user_id] = user_settings
-    save_user_data(user_data)
+        if devig_method is not None:
+            if devig_method in DevigMethod.__members__:
+                user_settings["devig_method"] = devig_method
+            else:
+                await interaction.followup.send(f"Invalid devig method: {devig_method}. Valid options are: {', '.join(DevigMethod.__members__.keys())}", ephemeral=True)
+                return
 
-    response = "Settings updated:\n"
-    if bankroll is not None:
-        response += f"Bankroll set to ${bankroll:,.2f}\n"
-    if toggle_bankroll is not None:
-        response += f"Bankroll calculations {'enabled' if toggle_bankroll else 'disabled'}\n"
-    if kelly is not None:
-        response += f"Kelly Criterion type set to {kelly.name}\n"
-    if devig_method is not None:
-        response += f"Devigging method set to {devig_method.name}"
+        user_data[user_id] = user_settings
+        save_user_data(user_data)
 
-    await interaction.response.send_message(response, ephemeral=True)
+        response = "Settings updated:\n"
+        if bankroll is not None:
+            response += f"Bankroll set to ${bankroll:,.2f}\n"
+        if toggle_bankroll is not None:
+            response += f"Bankroll calculations {'enabled' if toggle_bankroll else 'disabled'}\n"
+        if kelly is not None:
+            response += f"Kelly Criterion type set to {kelly}\n"
+        if devig_method is not None:
+            response += f"Devigging method set to {devig_method}"
+
+        await interaction.followup.send(response, ephemeral=True)
+
+    except Exception as e:
+        print(f"Error in settings command: {str(e)}")
+        await interaction.followup.send(f"An error occurred while updating settings: {str(e)}", ephemeral=True)
 
 if __name__ == "__main__":
     bot.run(os.getenv('DISCORD_BOT_TOKEN'))
