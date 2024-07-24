@@ -1,5 +1,5 @@
 .env
 .venv/
+ev-calc-lambda/
 .DS_Store
-old.py
 user_data.json
