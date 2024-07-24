@@ -9,9 +9,11 @@ This bot calculates expected value (EV) for sports betting odds.
 3. Activate the virtual environment: `source env/bin/activate`
 4. Install requirements: `pip install -r requirements.txt`
 5. Create a `.env` file and add your Discord bot token:
-   ```
-   DISCORD_BOT_TOKEN=your_token_here
-   ```
+   
+```
+DISCORD_BOT_TOKEN=your_token_here
+```
+
 6. Run the bot: `ev-calc.py`
 
 ## commands
