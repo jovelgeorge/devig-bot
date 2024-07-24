@@ -1,12 +1,15 @@
-import os
-import re
-from dotenv import load_dotenv
 import discord
 from discord import app_commands
 from discord.ext import commands
+import os
+from dotenv import load_dotenv
+import re
 import json
 from typing import List, Dict, Union, Tuple
 from datetime import datetime
+import numpy as np
+from scipy import stats
+from enum import Enum
 
 load_dotenv()
 
@@ -17,6 +20,19 @@ bot = commands.Bot(command_prefix='/', intents=intents)
 EMBED_COLOR = 0x000000
 PADDING = ' ' * 4
 USER_DATA_FILE = 'user_data.json'
+
+class KellyType(Enum):
+    FK = 1
+    HK = 0.5
+    QK = 0.25
+    EK = 0.125
+
+class DevigMethod(Enum):
+    wc = "worst-case (default)"
+    power = "power"
+    probit = "probit"
+    tko = "tko"
+    goto = "goto"
 
 def decimal_to_american(decimal_odds: float) -> int:
     if decimal_odds == 1:
@@ -67,10 +83,69 @@ def parse_odds(odds_str: str) -> List[List[int]]:
         parsed_legs.append(parsed_sides)
     return parsed_legs
 
-def devig(odds: List[int]) -> List[float]:
+def calculate_win_prob_from_fair_odds(fair_odds: int) -> float:
+    return implied_probability(fair_odds)
+
+def worst_case_devig(odds: List[int]) -> List[float]:
     probs = [implied_probability(odd) for odd in odds]
     total_prob = sum(probs)
     return [prob / total_prob for prob in probs]
+
+def power_devig(odds: List[int], iterations: int = 100) -> List[float]:
+    probs = [implied_probability(odd) for odd in odds]
+    k = 1
+    for _ in range(iterations):
+        new_probs = [p**k for p in probs]
+        total = sum(new_probs)
+        if abs(total - 1) < 1e-10:
+            break
+        k *= (1 / total) ** (1 / len(odds))
+    return [p**k / sum(p**k for p in probs) for p in probs]
+
+def probit_devig(odds: List[int]) -> List[float]:
+    probs = [implied_probability(odd) for odd in odds]
+    z_scores = stats.norm.ppf(probs)
+    adjustment = np.mean(z_scores)
+    adjusted_z_scores = z_scores - adjustment
+    return stats.norm.cdf(adjusted_z_scores).tolist()
+
+def tko_devig(odds: List[int]) -> List[float]:
+    if len(odds) != 2:
+        raise ValueError("TKO devigging method only works for two outcomes")
+    p1, p2 = [implied_probability(odd) for odd in odds]
+    q1, q2 = 1 - p1, 1 - p2
+    b0 = np.log(p2 / q1) / np.log(p1 / q2)
+    p = b0 / (1 + b0)
+    return [p, 1 - p]
+
+def goto_conversion(odds: List[Union[int, float]], total: float = 1, alpha: float = 1, beta: float = 1, eps: float = 1e-6) -> List[float]:
+    decimal_odds = np.array([american_to_decimal(odd) if isinstance(odd, int) else odd for odd in odds])
+    if len(decimal_odds) < 2:
+        raise ValueError('len(odds) must be >= 2')
+    if np.any(decimal_odds < 1):
+        raise ValueError('All odds must be >= 1')
+    probabilities = 1 / decimal_odds
+    se = np.sqrt((probabilities - probabilities**2) / ((probabilities**alpha) / beta))
+    step = (np.sum(probabilities) - total) / np.sum(se)
+    output_probabilities = np.clip(probabilities - (se * step), eps, 1 - eps)
+    return (output_probabilities / np.sum(output_probabilities)).tolist()
+
+def devig(odds: List[int], method: DevigMethod = DevigMethod.wc) -> List[float]:
+    devig_functions = {
+        DevigMethod.wc: worst_case_devig,
+        DevigMethod.power: power_devig,
+        DevigMethod.probit: probit_devig,
+        DevigMethod.tko: tko_devig,
+        DevigMethod.goto: goto_conversion
+    }
+    try:
+        result = devig_functions[method](odds)
+        if abs(sum(result) - 1) > 1e-6:
+            print(f"Warning: Devigged probabilities do not sum to 1 for method {method.name}. Sum: {sum(result)}")
+        return result
+    except Exception as e:
+        print(f"Error in devigging with method {method.name}: {str(e)}")
+        return worst_case_devig(odds)
 
 def calculate_ev(win_prob: float, odds: int) -> float:
     return (win_prob * american_to_decimal(odds)) - 1
@@ -81,32 +156,36 @@ def format_odds(odds: Union[int, str]) -> str:
     except ValueError:
         return str(odds)
 
-def create_embed(market_odds: str, results: List[Dict[str, Union[int, float]]]) -> discord.Embed:
+def create_embed(results: List[Dict[str, Union[int, float]]], ev: float, kelly: float, kelly_type: KellyType, wager_amount: float, combined_fair_odds: int, combined_win_prob: float, devig_method: DevigMethod, user_bankroll: float = None) -> discord.Embed:
     embed = discord.Embed(color=EMBED_COLOR)
     
-    formatted_market_odds = '/'.join(format_odds(odd) for odd in market_odds.split('/'))
-    embed.add_field(name="Odds", value=f"```\n{formatted_market_odds}{PADDING}\n```", inline=False)
+    embed.add_field(name="Bet Odds", value=f"```\n{format_odds(results[0]['market_odds'])}{PADDING}\n```", inline=False)
     
-    if results:
-        result = results[0]
-        ev_qk_fv_win = (
-            f"EV: {result['ev']:.2%}    QK: {result['qk']:.2%}\n"
-            f"FV: {format_odds(result['fair_odds'])}    WIN: {result['win']:.2%}"
+    if wager_amount is not None:
+        embed.add_field(name=f"Wager Amount ({kelly_type.name})", value=f"```\n${wager_amount:.2f}{PADDING}\n```", inline=False)
+    
+    if ev is not None and kelly is not None:
+        result_text = (
+            f"EV: {ev:.2%}    {kelly_type.name}: {kelly:.2%}\n"
+            f"FV: {format_odds(combined_fair_odds)}      WIN: {combined_win_prob:.2%}"
         )
-        embed.add_field(name="Results", value=f"```\n{ev_qk_fv_win}\n```", inline=False)
+        embed.add_field(name=f"Results", value=f"```\n{result_text}\n```", inline=False)
+
+    for i, result in enumerate(results):
+        title = "Comparison"
 
         market_prob = implied_probability(result['market_odds'])
         true_prob = result['win']
         combined_odds = (
             f"Market Odds      Fair Odds\n"
-            f"{market_prob*100:.2f}%: {format_odds(result['market_odds']):>5}    {true_prob*100:.2f}%: {format_odds(result['fair_odds']):>5}{PADDING}\n"
-            f"{(1-market_prob)*100:.2f}%: {format_odds(decimal_to_american(1/(1-market_prob))):>5}    "
-            f"{(1-true_prob)*100:.2f}%: {format_odds(decimal_to_american(1/(1-true_prob))):>5}{PADDING}\n"
+            f"{market_prob*100:05.2f}%: {format_odds(result['market_odds']):>5}    {true_prob*100:05.2f}%: {format_odds(result['fair_odds']):>5}{PADDING}\n"
+            f"{(1-market_prob)*100:05.2f}%: {format_odds(decimal_to_american(1/(1-market_prob))):>5}    "
+            f"{(1-true_prob)*100:05.2f}%: {format_odds(decimal_to_american(1/(1-true_prob))):>5}{PADDING}\n"
         )
-        embed.add_field(name="Comparison", value=f"```\n{combined_odds}\n```", inline=False)
+        embed.add_field(name=title, value=f"```\n{combined_odds}\n```", inline=False)
 
-    current_time = datetime.now().strftime("%I:%M %p")
-    embed.set_footer(text=f"calculator™     •     {current_time}")
+    current_time = datetime.now().strftime("%Y-%m-%d  @  %I:%M %p")
+    embed.set_footer(text=f"{current_time}")
     
     return embed
 
@@ -131,6 +210,54 @@ async def on_ready():
     except Exception as e:
         print(f"Failed to sync command tree: {e}")
 
+@bot.event
+async def on_message(message):
+    if message.author == bot.user:
+        return
+
+    pattern = r'(-?\d+):(-?\d+)(?:/(-?\d+))?'
+    matches = re.findall(pattern, message.content)
+
+    if matches:
+        for match in matches:
+            bet_odds, fair_odds, other_side = match
+            bet_odds = int(bet_odds)
+            fair_odds = int(fair_odds)
+            
+            user_id = str(message.author.id)
+            user_settings = user_data.get(user_id, {})
+            devig_method = DevigMethod(user_settings.get("devig_method", DevigMethod.wc.value))
+            
+            devigd_probs = devig([bet_odds, fair_odds], devig_method)
+            win_prob = calculate_win_prob_from_fair_odds(fair_odds)
+            
+            ev = calculate_ev(win_prob, bet_odds)
+            kelly_type = KellyType[user_settings.get("kelly", "QK")]
+            kelly = kelly_criterion(win_prob, bet_odds) * kelly_type.value
+
+            user_bankroll = user_settings.get("bankroll") if user_settings.get("bankroll_enabled", True) else None
+            wager_amount = kelly * user_bankroll if user_bankroll else None
+
+            embed = create_embed(
+                results=[{
+                    'market_odds': bet_odds,
+                    'fair_odds': fair_odds,
+                    'win': win_prob,
+                }],
+                ev=ev,
+                kelly=kelly,
+                kelly_type=kelly_type,
+                wager_amount=wager_amount,
+                combined_fair_odds=fair_odds,
+                combined_win_prob=win_prob,
+                devig_method=devig_method,
+                user_bankroll=user_bankroll
+            )
+
+            await message.channel.send(embed=embed)
+
+    await bot.process_commands(message)
+
 @bot.tree.command(name='ev', description="EV Calculator & Devigger")
 @app_commands.describe(
     market_odds='Enter the market odds (use comma for multiple legs)',
@@ -145,6 +272,8 @@ async def ev(interaction: discord.Interaction, market_odds: str, fair_odds: int 
 
         user_id = str(interaction.user.id)
         user_settings = user_data.get(user_id, {})
+        devig_method = DevigMethod(user_settings.get("devig_method", DevigMethod.wc.value))
+        kelly_type = KellyType[user_settings.get("kelly", "QK")]
         user_bankroll = user_settings.get("bankroll") if user_settings.get("bankroll_enabled", True) else None
 
         results = []
@@ -154,9 +283,11 @@ async def ev(interaction: discord.Interaction, market_odds: str, fair_odds: int 
             market_bet_odds = leg[0][0]
             if fair_odds is not None and i == 0:
                 fair_american = fair_odds
-                win_prob = implied_probability(fair_american)
+                devigd_probs = devig([market_bet_odds, fair_american], devig_method)
+                win_prob = devigd_probs[0]
             elif len(leg[0]) > 1:
-                win_prob = devig(leg[0])[0]
+                devigd_probs = devig(leg[0], devig_method)
+                win_prob = devigd_probs[0]
                 fair_american = decimal_to_american(1 / win_prob)
             else:
                 win_prob = implied_probability(market_bet_odds)
@@ -170,22 +301,20 @@ async def ev(interaction: discord.Interaction, market_odds: str, fair_odds: int 
             })
 
         combined_fair_odds = calculate_parlay_odds(fair_odds_list)
-        combined_win_prob = implied_probability(combined_fair_odds)
+        combined_win_prob = np.prod([result['win'] for result in results])
 
-        if fair_odds is not None:
-            ev = calculate_ev(combined_win_prob, int(market_odds))
-            qk = kelly_criterion(combined_win_prob, int(market_odds)) / 4
-            wager_amount = qk * user_bankroll if user_bankroll else None
-        elif bet_odds is not None:
-            ev = calculate_ev(combined_win_prob, bet_odds)
-            qk = kelly_criterion(combined_win_prob, bet_odds) / 4
-            wager_amount = qk * user_bankroll if user_bankroll else None
+        if bet_odds is not None:
+            market_odds = bet_odds
+        elif len(parsed_odds) == 1:
+            market_odds = parsed_odds[0][0][0]
         else:
-            ev = None
-            qk = None
-            wager_amount = None
+            market_odds = calculate_parlay_odds([leg[0][0] for leg in parsed_odds])
 
-        embed = create_embed(results, ev, qk, wager_amount, combined_fair_odds, combined_win_prob, user_bankroll)
+        ev = calculate_ev(combined_win_prob, market_odds)
+        kelly = kelly_criterion(combined_win_prob, market_odds) * kelly_type.value
+        wager_amount = kelly * user_bankroll if user_bankroll else None
+
+        embed = create_embed(results, ev, kelly, kelly_type, wager_amount, combined_fair_odds, combined_win_prob, devig_method, user_bankroll)
         await interaction.response.send_message(embed=embed)
 
     except Exception as e:
@@ -196,54 +325,28 @@ async def ev(interaction: discord.Interaction, market_odds: str, fair_odds: int 
             await interaction.response.send_message(error_message)
         print(f"Unexpected error in ev command: {str(e)}")
 
-def create_embed(results: List[Dict[str, Union[int, float]]], ev: float, qk: float, wager_amount: float, combined_fair_odds: int, combined_win_prob: float, user_bankroll: float = None) -> discord.Embed:
-    embed = discord.Embed(color=EMBED_COLOR)
-    
-    if wager_amount is not None:
-        embed.add_field(name="Wager Amount (QK)", value=f"```\n${wager_amount:.2f}{PADDING}\n```", inline=False)
-    
-    if ev is not None and qk is not None:
-        result_text = (
-            f"EV: {ev:.2%}    QK: {qk:.2%}\n"
-            f"FV: {format_odds(combined_fair_odds)}    WIN: {combined_win_prob:.2%}"
-        )
-        embed.add_field(name="Results", value=f"```\n{result_text}\n```", inline=False)
-
-    for i, result in enumerate(results):
-        if len(results) > 1:
-            title = f"Leg #{i+1}"
-        else:
-            title = "Comparison"
-
-        market_prob = implied_probability(result['market_odds'])
-        true_prob = result['win']
-        combined_odds = (
-            f"OG Odds          Fair Odds\n"
-            f"{market_prob*100:.2f}%: {format_odds(result['market_odds']):>5}    {true_prob*100:.2f}%: {format_odds(result['fair_odds']):>5}{PADDING}\n"
-            f"{(1-market_prob)*100:.2f}%: {format_odds(decimal_to_american(1/(1-market_prob))):>5}    "
-            f"{(1-true_prob)*100:.2f}%: {format_odds(decimal_to_american(1/(1-true_prob))):>5}{PADDING}\n"
-        )
-        embed.add_field(name=title, value=f"```\n{combined_odds}\n```", inline=False)
-
-    current_time = datetime.now().strftime("%I:%M %p")
-    embed.set_footer(text=f"calculator™     •     {current_time}")
-    
-    return embed
-
 @bot.tree.command(name='settings', description="Manage your calculator settings")
 @app_commands.describe(
     bankroll='Set your bankroll amount',
-    enable_bankroll='Enable or disable bankroll calculations'
+    toggle_bankroll='Enable or disable bankroll calculations',
+    kelly='Set Kelly Criterion type (FK, HK, QK, EK)',
+    devig_method='Set devig method (wc, power, probit, tko, or goto)'
 )
-async def settings(interaction: discord.Interaction, bankroll: float = None, enable_bankroll: bool = None):
+async def settings(interaction: discord.Interaction, bankroll: float = None, toggle_bankroll: bool = None, kelly: KellyType = None, devig_method: DevigMethod = None):
     user_id = str(interaction.user.id)
     user_settings = user_data.get(user_id, {})
 
     if bankroll is not None:
         user_settings["bankroll"] = bankroll
     
-    if enable_bankroll is not None:
-        user_settings["bankroll_enabled"] = enable_bankroll
+    if toggle_bankroll is not None:
+        user_settings["bankroll_enabled"] = toggle_bankroll
+
+    if kelly is not None:
+        user_settings["kelly"] = kelly.name
+
+    if devig_method is not None:
+        user_settings["devig_method"] = devig_method.value
 
     user_data[user_id] = user_settings
     save_user_data(user_data)
@@ -251,10 +354,14 @@ async def settings(interaction: discord.Interaction, bankroll: float = None, ena
     response = "Settings updated:\n"
     if bankroll is not None:
         response += f"Bankroll set to ${bankroll:,.2f}\n"
-    if enable_bankroll is not None:
-        response += f"Bankroll calculations {'enabled' if enable_bankroll else 'disabled'}"
+    if toggle_bankroll is not None:
+        response += f"Bankroll calculations {'enabled' if toggle_bankroll else 'disabled'}\n"
+    if kelly is not None:
+        response += f"Kelly Criterion type set to {kelly.name}\n"
+    if devig_method is not None:
+        response += f"Devigging method set to {devig_method.name}"
 
-    await interaction.response.send_message(response)
+    await interaction.response.send_message(response, ephemeral=True)
 
 if __name__ == "__main__":
     bot.run(os.getenv('DISCORD_BOT_TOKEN'))

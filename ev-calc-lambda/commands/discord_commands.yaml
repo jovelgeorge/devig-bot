@@ -1,0 +1,30 @@
+commands:
+  - name: ev
+    description: Calculate Expected Value
+    options:
+      - name: market_odds
+        description: Enter the market odds (use comma for multiple legs)
+        type: 3
+        required: true
+      - name: fair_odds
+        description: Enter the fair value odds (optional)
+        type: 4
+        required: false
+      - name: bet_odds
+        description: Enter the bet odds (optional)
+        type: 4
+        required: false
+  - name: settings
+    description: Manage your calculator settings
+    options:
+      - name: bankroll
+        description: Set your bankroll amount
+        type: 10
+        required: false
+      - name: toggle_bankroll
+        description: Enable or disable bankroll calculations
+        type: 5
+        required: false
+      - name: kelly
+        description: Set Kelly Criterion type (HK, QK, EK)
+        type: 

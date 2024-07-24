@@ -1,1 +1,1 @@
-{"727698736708452352": {"bankroll": 5000.0}}
+{"727698736708452352": {"bankroll": 20000.0, "kelly": "EK", "devig_method": "worst-case (default)"}}

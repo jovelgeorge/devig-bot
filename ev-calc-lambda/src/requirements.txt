@@ -1,0 +1,5 @@
+flask
+discord-interactions
+boto3==1.18.65
+botocore==1.21.65
+python-dotenv==0.19.1
