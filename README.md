@@ -1,8 +1,8 @@
-# Discord EV Calculator Bot
+# devig & EV calculator
 
 This bot calculates expected value (EV) for sports betting odds.
 
-## Setup
+## setup
 
 1. Clone the repository
 2. Create a virtual environment: `python3 -m venv env`
@@ -14,6 +14,22 @@ This bot calculates expected value (EV) for sports betting odds.
    ```
 6. Run the bot: `ev-calc.py`
 
-## Usage
+## commands
 
-[Explain how to use your bot's commands here]
+Type `/ev` and it will show you a list of parameters 
+
+*market_odds* — Enter the market odds
+- For two-way markets: `-130/110`
+- For multiple legs: `-130/110, -125/115`
+- For market averages: `avg(-130, -145)/avg(110,115)`
+*bet_odds* — The odds for the bet
+*fair_odds* — For when you already have the fair value
+
+Type `/settings` and it will show you a list of personal settings
+
+*toggle_bankroll* — Enable or disable bankroll calculations.
+*bankroll* — Set bankroll amount
+*kelly* — Set Kelly Criterion type: `HK`, `QK`, `EK`
+*devig_type* — Set devig method: `wc` (default), `pb` (probit)
+
+The calculator can also be toggled without the command tree for quick calculations. ex: `bet_odds:fair_odds`
