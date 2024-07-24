@@ -24,6 +24,7 @@ Type `/ev` and it will show you a list of parameters
 - For two-way markets: `-130/110`
 - For multiple legs: `-130/110, -125/115`
 - For market averages: `avg(-130, -145)/avg(110,115)`
+
 *bet_odds* — The odds for the bet
 *fair_odds* — For when you already have the fair value
 
