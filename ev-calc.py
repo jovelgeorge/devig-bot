@@ -215,7 +215,7 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    pattern = r'(-?\d+):(-?\d+)(?:/(-?\d+))?'
+    pattern = r'(-?\d{3,}):(-?\d{3,})(?:/(-?\d{3,}))?'
     matches = re.findall(pattern, message.content)
 
     if matches:
