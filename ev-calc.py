@@ -207,6 +207,8 @@ async def on_ready():
     try:
         await bot.tree.sync()
         print("Command tree synced successfully")
+        custom_activity = discord.Activity(name="powered by JOVEL", type=discord.ActivityType.custom)
+        await bot.change_presence(activity=custom_activity)
     except Exception as e:
         print(f"Failed to sync command tree: {e}")
 
