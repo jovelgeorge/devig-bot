@@ -215,11 +215,17 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    pattern = r'(-?\d{3,}):(-?\d{3,})(?:/(-?\d{3,}))?'
+    pattern = r'([-+]?\d+):([-+]?\d+)(?:/([-+]?\d+))?'
     matches = re.findall(pattern, message.content)
 
     if matches:
+        valid_matches = []
         for match in matches:
+            bet_odds, fair_odds, other_side = match
+            if any(abs(int(odds)) >= 100 for odds in match if odds):
+                valid_matches.append(match)
+
+        for match in valid_matches:
             bet_odds, fair_odds, other_side = match
             bet_odds = int(bet_odds)
             fair_odds = int(fair_odds)
