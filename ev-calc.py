@@ -183,9 +183,6 @@ def create_embed(results: List[Dict[str, Union[int, float]]], ev: float, kelly: 
             f"{(1-true_prob)*100:05.2f}%: {format_odds(decimal_to_american(1/(1-true_prob))):>5}{PADDING}\n"
         )
         embed.add_field(name=title, value=f"```\n{combined_odds}\n```", inline=False)
-
-    current_time = datetime.now().strftime("%Y-%m-%d  @  %I:%M %p")
-    embed.set_footer(text=f"{current_time}")
     
     return embed
 
