@@ -20,7 +20,7 @@ DISCORD_BOT_TOKEN=your_token_here
 
 Type `/ev` and it will show you a list of parameters 
 
-*market_odds* — Enter the market odds
+*odds* — Enter the market odds
 - For two-way markets: `-130/110`
 - For multiple legs: `-130/110, -125/115`
 - For market averages: `avg(-130, -145)/avg(110,115)`
@@ -35,4 +35,7 @@ Type `/settings` and it will show you a list of personal settings
 *kelly* — Set Kelly Criterion type: `HK`, `QK`, `EK`
 *devig_type* — Set devig method: `wc` (default), `pb` (probit)
 
-The calculator can also be toggled without the command tree for quick calculations. ex: `bet_odds:fair_odds`
+The calculator can also be toggled without the command tree for quick calculations using the syntax: `bet_odds:fair_odds`
+
+- For calculating to fair: `100:-130`
+- For calculating parlays: `105:-130,-132`
