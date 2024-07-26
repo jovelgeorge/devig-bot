@@ -217,13 +217,13 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    pattern = r'([-+]?\d+(?:,[-+]?\d+)*):?([-+]?\d+)?'
+    pattern = r'([-+]?\d+):([-+]?\d+(?:,[-+]?\d+)*)'
     match = re.match(pattern, message.content)
 
     if match:
-        odds_str, bet_odds_str = match.groups()
-        fair_odds = [int(x) for x in odds_str.split(',')]
-        bet_odds = int(bet_odds_str) if bet_odds_str else None
+        bet_odds_str, fair_odds_str = match.groups()
+        bet_odds = int(bet_odds_str)
+        fair_odds = [int(x) for x in fair_odds_str.split(',')]
 
         user_id = str(message.author.id)
         user_settings = user_data.get(user_id, {})
@@ -238,16 +238,13 @@ async def on_message(message):
             win_prob = implied_probability(fair_odd)
             win_probs.append(win_prob)
             results.append({
-                'market_odds': bet_odds or fair_odd,
+                'market_odds': bet_odds,
                 'fair_odds': fair_odd,
                 'win': win_prob,
             })
 
         combined_fair_odds = calculate_parlay_odds(fair_odds)
         combined_win_prob = np.prod(win_probs)
-
-        if bet_odds is None:
-            bet_odds = fair_odds[0] if len(fair_odds) == 1 else calculate_parlay_odds(fair_odds)
 
         ev = calculate_ev(combined_win_prob, bet_odds)
         kelly = kelly_criterion(combined_win_prob, bet_odds) * kelly_type.value
