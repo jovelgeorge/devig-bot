@@ -65,6 +65,10 @@ def kelly_criterion(win_probability: float, bet_odds: int) -> float:
         return 0
     return max(0, (win_probability * decimal_odds - 1) / (decimal_odds - 1))
 
+def calculate_parlay_ev(win_probs: List[float], bet_odds: int) -> float:
+    combined_prob = np.prod(win_probs)
+    return expected_value(combined_prob, bet_odds)
+
 def parse_odds(odds_str: str) -> List[List[int]]:
     def process_avg(avg_str: str) -> int:
         avg_odds = [float(x.strip()) for x in avg_str[4:-1].split(',')]
@@ -156,7 +160,7 @@ def format_odds(odds: Union[int, str]) -> str:
     except ValueError:
         return str(odds)
 
-def create_embed(results: List[Dict[str, Union[int, float]]], ev: float, kelly: float, kelly_type: KellyType, wager_amount: float, combined_fair_odds: int, combined_win_prob: float, devig_method: DevigMethod, user_bankroll: float = None) -> discord.Embed:
+def create_embed(results: List[Dict[str, Union[int, float]]], ev: float, kelly: float, kelly_type: KellyType, wager_amount: float, combined_fair_odds: int, combined_win_prob: float, devig_method: DevigMethod, user_bankroll: float = None, is_parlay: bool = False) -> discord.Embed:
     embed = discord.Embed(color=EMBED_COLOR)
     
     embed.add_field(name="Bet Odds", value=f"```\n{format_odds(results[0]['market_odds'])}{PADDING}\n```", inline=False)
@@ -172,7 +176,7 @@ def create_embed(results: List[Dict[str, Union[int, float]]], ev: float, kelly: 
         embed.add_field(name=f"Results", value=f"```\n{result_text}\n```", inline=False)
 
     for i, result in enumerate(results):
-        title = "Comparison"
+        title = f"Leg {i+1}" if is_parlay else "Comparison"
 
         market_prob = implied_probability(result['market_odds'])
         true_prob = result['win']
@@ -183,9 +187,6 @@ def create_embed(results: List[Dict[str, Union[int, float]]], ev: float, kelly: 
             f"{(1-true_prob)*100:05.2f}%: {format_odds(decimal_to_american(1/(1-true_prob))):>5}{PADDING}\n"
         )
         embed.add_field(name=title, value=f"```\n{combined_odds}\n```", inline=False)
-
-    current_time = datetime.now().strftime("%Y-%m-%d  @  %I:%M %p")
-    embed.set_footer(text=f"{current_time}")
     
     return embed
 
@@ -286,6 +287,7 @@ async def ev(interaction: discord.Interaction, market_odds: str, fair_odds: int 
 
         results = []
         fair_odds_list = []
+        win_probs = []
 
         for i, leg in enumerate(parsed_odds):
             market_bet_odds = leg[0][0]
@@ -302,6 +304,7 @@ async def ev(interaction: discord.Interaction, market_odds: str, fair_odds: int 
                 fair_american = market_bet_odds
             
             fair_odds_list.append(fair_american)
+            win_probs.append(win_prob)
             results.append({
                 'market_odds': market_bet_odds,
                 'fair_odds': fair_american,
@@ -309,7 +312,7 @@ async def ev(interaction: discord.Interaction, market_odds: str, fair_odds: int 
             })
 
         combined_fair_odds = calculate_parlay_odds(fair_odds_list)
-        combined_win_prob = np.prod([result['win'] for result in results])
+        combined_win_prob = np.prod(win_probs)
 
         if bet_odds is not None:
             market_odds = bet_odds
@@ -318,11 +321,13 @@ async def ev(interaction: discord.Interaction, market_odds: str, fair_odds: int 
         else:
             market_odds = calculate_parlay_odds([leg[0][0] for leg in parsed_odds])
 
-        ev = calculate_ev(combined_win_prob, market_odds)
+        ev = calculate_parlay_ev(win_probs, market_odds)
         kelly = kelly_criterion(combined_win_prob, market_odds) * kelly_type.value
         wager_amount = kelly * user_bankroll if user_bankroll else None
 
-        embed = create_embed(results, ev, kelly, kelly_type, wager_amount, combined_fair_odds, combined_win_prob, devig_method, user_bankroll)
+        is_parlay = len(results) > 1
+        embed = create_embed(results, ev, kelly, kelly_type, wager_amount, combined_fair_odds, combined_win_prob, devig_method, user_bankroll, is_parlay)
+        
         await interaction.response.send_message(embed=embed)
 
     except Exception as e:
