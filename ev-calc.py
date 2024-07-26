@@ -69,23 +69,15 @@ def calculate_parlay_ev(win_probs: List[float], bet_odds: int) -> float:
     combined_prob = np.prod(win_probs)
     return expected_value(combined_prob, bet_odds)
 
-def parse_odds(odds_str: str) -> List[List[int]]:
-    def process_avg(avg_str: str) -> int:
-        avg_odds = [float(x.strip()) for x in avg_str[4:-1].split(',')]
-        return int(sum(avg_odds) / len(avg_odds))
-
-    legs = odds_str.split(',')
-    parsed_legs = []
-    for leg in legs:
-        sides = leg.strip().split('/')
-        parsed_sides = []
-        for side in sides:
-            if side.startswith('avg(') and side.endswith(')'):
-                parsed_sides.append(process_avg(side))
-            else:
-                parsed_sides.append(int(side))
-        parsed_legs.append(parsed_sides)
-    return parsed_legs
+def parse_odds(odds_str: str) -> Tuple[List[int], int]:
+    parts = odds_str.split(':')
+    if len(parts) == 2:
+        bet_odds = int(parts[1])
+        fair_odds = [int(x) for x in parts[0].split(',')]
+    else:
+        bet_odds = None
+        fair_odds = [int(x) for x in parts[0].split(',')]
+    return fair_odds, bet_odds
 
 def calculate_win_prob_from_fair_odds(fair_odds: int) -> float:
     return implied_probability(fair_odds)
@@ -160,17 +152,21 @@ def format_odds(odds: Union[int, str]) -> str:
     except ValueError:
         return str(odds)
 
-def create_embed(results: List[Dict[str, Union[int, float]]], ev: float, kelly: float, kelly_type: KellyType, wager_amount: float, combined_fair_odds: int, combined_win_prob: float, devig_method: DevigMethod, user_bankroll: float = None, is_parlay: bool = False) -> discord.Embed:
+def format_ev(ev: float) -> str:
+    return f"{ev:05.2f}%" if ev >= 0 else f"{ev:06.2f}%"
+
+def create_embed(results: List[Dict[str, Union[int, float]]], ev: float, kelly: float, kelly_type: KellyType, wager_amount: float, combined_fair_odds: int, combined_win_prob: float, devig_method: DevigMethod, user_bankroll: float = None, is_parlay: bool = False, bet_odds: int = None) -> discord.Embed:
     embed = discord.Embed(color=EMBED_COLOR)
     
-    embed.add_field(name="Bet Odds", value=f"```\n{format_odds(results[0]['market_odds'])}{PADDING}\n```", inline=False)
+    display_odds = bet_odds if bet_odds is not None else results[0]['market_odds']
+    embed.add_field(name="Bet Odds", value=f"```\n{format_odds(display_odds)}{PADDING}\n```", inline=False)
     
     if wager_amount is not None:
         embed.add_field(name=f"Wager Amount ({kelly_type.name})", value=f"```\n${wager_amount:.2f}{PADDING}\n```", inline=False)
     
     if ev is not None and kelly is not None:
         result_text = (
-            f"EV: {ev:.2%}    {kelly_type.name}: {kelly:.2%}\n"
+            f"EV: {format_ev(ev*100)}    {kelly_type.name}: {kelly:.2%}\n"
             f"FV: {format_odds(combined_fair_odds)}      WIN: {combined_win_prob:.2%}"
         )
         embed.add_field(name=f"Results", value=f"```\n{result_text}\n```", inline=False)
@@ -187,6 +183,9 @@ def create_embed(results: List[Dict[str, Union[int, float]]], ev: float, kelly: 
             f"{(1-true_prob)*100:05.2f}%: {format_odds(decimal_to_american(1/(1-true_prob))):>5}{PADDING}\n"
         )
         embed.add_field(name=title, value=f"```\n{combined_odds}\n```", inline=False)
+
+    current_time = datetime.now().strftime("%Y-%m-%d  @  %I:%M %p")
+    embed.set_footer(text=f"{current_time}")
     
     return embed
 
@@ -218,115 +217,108 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    pattern = r'([-+]?\d+):([-+]?\d+)(?:/([-+]?\d+))?'
-    matches = re.findall(pattern, message.content)
+    pattern = r'([-+]?\d+(?:,[-+]?\d+)*):?([-+]?\d+)?'
+    match = re.match(pattern, message.content)
 
-    if matches:
-        valid_matches = []
-        for match in matches:
-            bet_odds, fair_odds, other_side = match
-            if any(abs(int(odds)) >= 100 for odds in match if odds):
-                valid_matches.append(match)
+    if match:
+        odds_str, bet_odds_str = match.groups()
+        fair_odds = [int(x) for x in odds_str.split(',')]
+        bet_odds = int(bet_odds_str) if bet_odds_str else None
 
-        for match in valid_matches:
-            bet_odds, fair_odds, other_side = match
-            bet_odds = int(bet_odds)
-            fair_odds = int(fair_odds)
-            
-            user_id = str(message.author.id)
-            user_settings = user_data.get(user_id, {})
-            devig_method = DevigMethod(user_settings.get("devig_method", DevigMethod.wc.value))
-            
-            devigd_probs = devig([bet_odds, fair_odds], devig_method)
-            win_prob = calculate_win_prob_from_fair_odds(fair_odds)
-            
-            ev = calculate_ev(win_prob, bet_odds)
-            kelly_type = KellyType[user_settings.get("kelly", "QK")]
-            kelly = kelly_criterion(win_prob, bet_odds) * kelly_type.value
-
-            user_bankroll = user_settings.get("bankroll") if user_settings.get("bankroll_enabled", True) else None
-            wager_amount = kelly * user_bankroll if user_bankroll else None
-
-            embed = create_embed(
-                results=[{
-                    'market_odds': bet_odds,
-                    'fair_odds': fair_odds,
-                    'win': win_prob,
-                }],
-                ev=ev,
-                kelly=kelly,
-                kelly_type=kelly_type,
-                wager_amount=wager_amount,
-                combined_fair_odds=fair_odds,
-                combined_win_prob=win_prob,
-                devig_method=devig_method,
-                user_bankroll=user_bankroll
-            )
-
-            await message.channel.send(embed=embed)
-
-    await bot.process_commands(message)
-
-@bot.tree.command(name='ev', description="EV Calculator & Devigger")
-@app_commands.describe(
-    market_odds='Enter the market odds (use comma for multiple legs)',
-    fair_odds='Enter the fair value odds (optional)',
-    bet_odds='Enter the bet odds (optional)'
-)
-async def ev(interaction: discord.Interaction, market_odds: str, fair_odds: int = None, bet_odds: int = None):
-    try:
-        market_odds = re.sub(r'avg\([^)]+\)', lambda m: str(int(sum(float(x.strip()) for x in m.group()[4:-1].split(',')) / len(m.group()[4:-1].split(',')))), market_odds)
-        
-        parsed_odds = [parse_odds(leg.strip()) for leg in market_odds.split(',')]
-
-        user_id = str(interaction.user.id)
+        user_id = str(message.author.id)
         user_settings = user_data.get(user_id, {})
         devig_method = DevigMethod(user_settings.get("devig_method", DevigMethod.wc.value))
         kelly_type = KellyType[user_settings.get("kelly", "QK")]
         user_bankroll = user_settings.get("bankroll") if user_settings.get("bankroll_enabled", True) else None
 
         results = []
-        fair_odds_list = []
         win_probs = []
 
-        for i, leg in enumerate(parsed_odds):
-            market_bet_odds = leg[0][0]
-            if fair_odds is not None and i == 0:
-                fair_american = fair_odds
-                devigd_probs = devig([market_bet_odds, fair_american], devig_method)
-                win_prob = devigd_probs[0]
-            elif len(leg[0]) > 1:
-                devigd_probs = devig(leg[0], devig_method)
-                win_prob = devigd_probs[0]
-                fair_american = decimal_to_american(1 / win_prob)
-            else:
-                win_prob = implied_probability(market_bet_odds)
-                fair_american = market_bet_odds
-            
-            fair_odds_list.append(fair_american)
+        for fair_odd in fair_odds:
+            win_prob = implied_probability(fair_odd)
             win_probs.append(win_prob)
             results.append({
-                'market_odds': market_bet_odds,
-                'fair_odds': fair_american,
+                'market_odds': bet_odds or fair_odd,
+                'fair_odds': fair_odd,
                 'win': win_prob,
             })
 
-        combined_fair_odds = calculate_parlay_odds(fair_odds_list)
+        combined_fair_odds = calculate_parlay_odds(fair_odds)
         combined_win_prob = np.prod(win_probs)
 
-        if bet_odds is not None:
-            market_odds = bet_odds
-        elif len(parsed_odds) == 1:
-            market_odds = parsed_odds[0][0][0]
-        else:
-            market_odds = calculate_parlay_odds([leg[0][0] for leg in parsed_odds])
+        if bet_odds is None:
+            bet_odds = fair_odds[0] if len(fair_odds) == 1 else calculate_parlay_odds(fair_odds)
 
-        ev = calculate_parlay_ev(win_probs, market_odds)
-        kelly = kelly_criterion(combined_win_prob, market_odds) * kelly_type.value
+        ev = calculate_ev(combined_win_prob, bet_odds)
+        kelly = kelly_criterion(combined_win_prob, bet_odds) * kelly_type.value
         wager_amount = kelly * user_bankroll if user_bankroll else None
 
         is_parlay = len(results) > 1
-        embed = create_embed(results, ev, kelly, kelly_type, wager_amount, combined_fair_odds, combined_win_prob, devig_method, user_bankroll, is_parlay)
+        embed = create_embed(results, ev, kelly, kelly_type, wager_amount, combined_fair_odds, combined_win_prob, devig_method, user_bankroll, is_parlay, bet_odds)
+
+        await message.channel.send(embed=embed)
+
+    await bot.process_commands(message)
+
+@bot.tree.command(name='ev', description="EV Calculator & Devigger")
+@app_commands.describe(
+    odds='Enter the fair odds (use comma for multiple legs)',
+    bet_odds='Enter the bet odds (optional)',
+    kelly='Set Kelly Criterion type (FK, HK, QK, EK)',
+    devig_method='Set devig method (wc, power, probit, tko, or goto)'
+)
+async def ev(interaction: discord.Interaction, odds: str, bet_odds: int = None, kelly: str = None, devig_method: str = None):
+    try:
+        odds = re.sub(r'avg\([^)]+\)', lambda m: str(int(sum(float(x.strip()) for x in m.group()[4:-1].split(',')) / len(m.group()[4:-1].split(',')))), odds)
+        
+        fair_odds, parsed_bet_odds = parse_odds(odds)
+        bet_odds = bet_odds or parsed_bet_odds
+
+        user_id = str(interaction.user.id)
+        user_settings = user_data.get(user_id, {})
+        
+        if devig_method:
+            if devig_method not in DevigMethod.__members__:
+                await interaction.response.send_message(f"Invalid devig method: {devig_method}. Valid options are: {', '.join(DevigMethod.__members__.keys())}", ephemeral=True)
+                return
+            devig_method = DevigMethod[devig_method]
+        else:
+            devig_method = DevigMethod(user_settings.get("devig_method", DevigMethod.wc.value))
+        
+        if kelly:
+            if kelly not in KellyType.__members__:
+                await interaction.response.send_message(f"Invalid Kelly type: {kelly}. Valid options are: {', '.join(KellyType.__members__.keys())}", ephemeral=True)
+                return
+            kelly_type = KellyType[kelly]
+        else:
+            kelly_type = KellyType[user_settings.get("kelly", "QK")]
+        
+        user_bankroll = user_settings.get("bankroll") if user_settings.get("bankroll_enabled", True) else None
+
+        results = []
+        win_probs = []
+
+        for fair_odd in fair_odds:
+            win_prob = implied_probability(fair_odd)
+            win_probs.append(win_prob)
+            results.append({
+                'market_odds': bet_odds or fair_odd,
+                'fair_odds': fair_odd,
+                'win': win_prob,
+            })
+
+        combined_fair_odds = calculate_parlay_odds(fair_odds)
+        combined_win_prob = np.prod(win_probs)
+
+        if bet_odds is None:
+            bet_odds = fair_odds[0] if len(fair_odds) == 1 else calculate_parlay_odds(fair_odds)
+
+        ev = calculate_ev(combined_win_prob, bet_odds)
+        kelly = kelly_criterion(combined_win_prob, bet_odds) * kelly_type.value
+        wager_amount = kelly * user_bankroll if user_bankroll else None
+
+        is_parlay = len(results) > 1
+        embed = create_embed(results, ev, kelly, kelly_type, wager_amount, combined_fair_odds, combined_win_prob, devig_method, user_bankroll, is_parlay, bet_odds)
         
         await interaction.response.send_message(embed=embed)
 
