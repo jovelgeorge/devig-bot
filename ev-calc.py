@@ -214,11 +214,20 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    pattern = r'([-+]?\d+):([-+]?\d+(?:,[-+]?\d+)*)'
-    match = re.match(pattern, message.content)
+    odds_pattern = r'([-+]?\d+):([-+]?\d+(?:,[-+]?\d+)*)'
+    time_pattern = r'^\d{1,2}:\d{2}$'
+
+    if re.match(time_pattern, message.content.strip()):
+        return
+
+    match = re.match(odds_pattern, message.content)
 
     if match:
         bet_odds_str, fair_odds_str = match.groups()
+        
+        if len(bet_odds_str) <= 2 and len(fair_odds_str) <= 2:
+            return
+
         bet_odds = int(bet_odds_str)
         fair_odds = [int(x) for x in fair_odds_str.split(',')]
 
@@ -253,6 +262,7 @@ async def on_message(message):
         await message.channel.send(embed=embed)
 
     await bot.process_commands(message)
+
 
 @bot.tree.command(name='ev', description="EV Calculator & Devigger")
 @app_commands.describe(
