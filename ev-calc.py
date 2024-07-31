@@ -216,46 +216,52 @@ async def on_message(message):
 
     parts = [part.strip() for part in message.content.split(':')]
 
-    if len(parts) == 2 and all(part.replace('-', '').isdigit() for part in parts):
+    if len(parts) == 2:
         bet_odds_str, fair_odds_str = parts
 
-        if int(bet_odds_str) < 24 and int(fair_odds_str) < 60:
-            return
+        def is_valid_odds(odds_str):
+            try:
+                odds = int(odds_str)
+                return odds <= -100 or odds >= 100
+            except ValueError:
+                return False
 
-        bet_odds = int(bet_odds_str)
-        fair_odds = [int(x) for x in fair_odds_str.split(',')]
+        if is_valid_odds(bet_odds_str) and all(is_valid_odds(odd) for odd in fair_odds_str.split(',')):
+            bet_odds = int(bet_odds_str)
+            fair_odds = [int(x) for x in fair_odds_str.split(',')]
 
-        user_id = str(message.author.id)
-        user_settings = user_data.get(user_id, {})
-        devig_method = DevigMethod(user_settings.get("devig_method", DevigMethod.wc.value))
-        kelly_type = KellyType[user_settings.get("kelly", "QK")]
-        user_bankroll = user_settings.get("bankroll") if user_settings.get("bankroll_enabled", True) else None
+            user_id = str(message.author.id)
+            user_settings = user_data.get(user_id, {})
+            devig_method = DevigMethod(user_settings.get("devig_method", DevigMethod.wc.value))
+            kelly_type = KellyType[user_settings.get("kelly", "QK")]
+            user_bankroll = user_settings.get("bankroll") if user_settings.get("bankroll_enabled", True) else None
 
-        results = []
-        win_probs = []
+            results = []
+            win_probs = []
 
-        for fair_odd in fair_odds:
-            win_prob = implied_probability(fair_odd)
-            win_probs.append(win_prob)
-            results.append({
-                'market_odds': bet_odds,
-                'fair_odds': fair_odd,
-                'win': win_prob,
-            })
+            for fair_odd in fair_odds:
+                win_prob = implied_probability(fair_odd)
+                win_probs.append(win_prob)
+                results.append({
+                    'market_odds': bet_odds,
+                    'fair_odds': fair_odd,
+                    'win': win_prob,
+                })
 
-        combined_fair_odds = calculate_parlay_odds(fair_odds)
-        combined_win_prob = np.prod(win_probs)
+            combined_fair_odds = calculate_parlay_odds(fair_odds)
+            combined_win_prob = np.prod(win_probs)
 
-        ev = calculate_ev(combined_win_prob, bet_odds)
-        kelly = kelly_criterion(combined_win_prob, bet_odds) * kelly_type.value
-        wager_amount = kelly * user_bankroll if user_bankroll else None
+            ev = calculate_ev(combined_win_prob, bet_odds)
+            kelly = kelly_criterion(combined_win_prob, bet_odds) * kelly_type.value
+            wager_amount = kelly * user_bankroll if user_bankroll else None
 
-        is_parlay = len(results) > 1
-        embed = create_embed(results, ev, kelly, kelly_type, wager_amount, combined_fair_odds, combined_win_prob, devig_method, user_bankroll, is_parlay, bet_odds)
+            is_parlay = len(results) > 1
+            embed = create_embed(results, ev, kelly, kelly_type, wager_amount, combined_fair_odds, combined_win_prob, devig_method, user_bankroll, is_parlay, bet_odds)
 
-        await message.channel.send(embed=embed)
+            await message.channel.send(embed=embed)
 
     await bot.process_commands(message)
+
 
 @bot.tree.command(name='ev', description="EV Calculator & Devigger")
 @app_commands.describe(
