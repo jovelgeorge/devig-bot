@@ -72,11 +72,17 @@ def calculate_parlay_ev(win_probs: List[float], bet_odds: int) -> float:
 def parse_odds(odds_str: str) -> Tuple[List[int], int]:
     parts = odds_str.split(':')
     if len(parts) == 2:
-        bet_odds = int(parts[1])
-        fair_odds = [int(x) for x in parts[0].split(',')]
+        bet_odds = int(parts[1].strip())
+        fair_odds_str = parts[0].strip()
     else:
         bet_odds = None
-        fair_odds = [int(x) for x in parts[0].split(',')]
+        fair_odds_str = odds_str.strip()
+    
+    if '/' in fair_odds_str:
+        fair_odds = [int(x.strip()) for x in fair_odds_str.split('/')]
+    else:
+        fair_odds = [int(x.strip()) for x in fair_odds_str.split(',')]
+    
     return fair_odds, bet_odds
 
 def calculate_win_prob_from_fair_odds(fair_odds: int) -> float:
