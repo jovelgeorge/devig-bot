@@ -48,14 +48,12 @@ def decimal_to_american(decimal_odds: float) -> int:
     else:
         return int(-100 / (decimal_odds - 1))
 
-# New function to parse two-way market odds
 def parse_two_way_odds(odds_str: str) -> Tuple[int, int]:
     odds = odds_str.split('/')
     if len(odds) != 2:
         raise ValueError("Invalid two-way odds format. Use 'odds1/odds2'")
     return int(odds[0]), int(odds[1])
 
-# New function to remove vig from two-way market odds
 def remove_vig_two_way(odds1: int, odds2: int) -> Tuple[float, float]:
     prob1 = implied_probability(odds1)
     prob2 = implied_probability(odds2)
@@ -66,9 +64,8 @@ def remove_vig_two_way(odds1: int, odds2: int) -> Tuple[float, float]:
     fair_decimal2 = 1 / fair_prob2
     return decimal_to_american(fair_decimal1), decimal_to_american(fair_decimal2)
 
-# New function to create a simplified embed for devigged odds
 def create_devig_embed(market_odds1: int, market_odds2: int, fair_odds1: int, fair_odds2: int) -> discord.Embed:
-    embed = discord.Embed(color=EMBED_COLOR, title="Devigged Odds")
+    embed = discord.Embed(color=EMBED_COLOR)
     
     market_prob1 = implied_probability(market_odds1)
     market_prob2 = implied_probability(market_odds2)
