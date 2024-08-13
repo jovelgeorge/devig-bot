@@ -48,6 +48,21 @@ def american_to_decimal(odds: int) -> float:
 def implied_probability(odds: int) -> float:
     return abs(odds) / (abs(odds) + 100) if odds < 0 else 100 / (odds + 100)
 
+def devig_two_way_market(odds: List[int]) -> List[int]:
+    if len(odds) != 2:
+        raise ValueError("Two-way market should have exactly two odds")
+    
+    prob1 = implied_probability(odds[0])
+    prob2 = implied_probability(odds[1])
+    
+    true_prob1 = prob1 / (prob1 + prob2)
+    true_prob2 = prob2 / (prob1 + prob2)
+    
+    fair_odds1 = decimal_to_american(1 / true_prob1)
+    fair_odds2 = decimal_to_american(1 / true_prob2)
+    
+    return [fair_odds1, fair_odds2]
+
 def calculate_parlay_odds(odds_list: List[int]) -> int:
     decimal_odds = [american_to_decimal(odds) for odds in odds_list]
     parlay_decimal = 1
@@ -69,21 +84,22 @@ def calculate_parlay_ev(win_probs: List[float], bet_odds: int) -> float:
     combined_prob = np.prod(win_probs)
     return expected_value(combined_prob, bet_odds)
 
-def parse_odds(odds_str: str) -> Tuple[List[int], int]:
+def parse_odds(odds_str: str) -> Tuple[List[int], int, bool]:
     parts = odds_str.split(':')
     if len(parts) == 2:
         bet_odds = int(parts[1].strip())
-        fair_odds_str = parts[0].strip()
+        odds_str = parts[0].strip()
     else:
         bet_odds = None
-        fair_odds_str = odds_str.strip()
+        odds_str = odds_str.strip()
     
-    if '/' in fair_odds_str:
-        fair_odds = [int(x.strip()) for x in fair_odds_str.split('/')]
+    is_two_way = '/' in odds_str
+    if is_two_way:
+        odds = [int(x.strip()) for x in odds_str.split('/')]
     else:
-        fair_odds = [int(x.strip()) for x in fair_odds_str.split(',')]
+        odds = [int(x.strip()) for x in odds_str.split(',')]
     
-    return fair_odds, bet_odds
+    return odds, bet_odds, is_two_way
 
 def calculate_win_prob_from_fair_odds(fair_odds: int) -> float:
     return implied_probability(fair_odds)
@@ -271,17 +287,15 @@ async def on_message(message):
 
 @bot.tree.command(name='ev', description="EV Calculator & Devigger")
 @app_commands.describe(
-    odds='Enter the fair odds (use comma for multiple legs)',
+    odds='Enter the odds (use / for two-way market, comma for multiple legs)',
     bet_odds='Enter the bet odds (optional)',
     kelly='Set Kelly Criterion type (FK, HK, QK, EK)',
     devig_method='Set devig method (wc, power, probit, tko, or goto)'
 )
 async def ev(interaction: discord.Interaction, odds: str, bet_odds: int = None, kelly: str = None, devig_method: str = None):
     try:
-        odds = re.sub(r'avg\([^)]+\)', lambda m: str(int(sum(float(x.strip()) for x in m.group()[4:-1].split(',')) / len(m.group()[4:-1].split(',')))), odds)
-        
-        fair_odds, parsed_bet_odds = parse_odds(odds)
-        bet_odds = bet_odds or parsed_bet_odds
+        market_odds, parsed_bet_odds, is_two_way = parse_odds(odds)
+        bet_odds = bet_odds or parsed_bet_odds or market_odds[0]
 
         user_id = str(interaction.user.id)
         user_settings = user_data.get(user_id, {})
@@ -304,23 +318,26 @@ async def ev(interaction: discord.Interaction, odds: str, bet_odds: int = None, 
         
         user_bankroll = user_settings.get("bankroll") if user_settings.get("bankroll_enabled", True) else None
 
+        if is_two_way:
+            fair_odds = devig_two_way_market(market_odds)
+        else:
+            fair_odds = devig(market_odds, devig_method)
+
         results = []
         win_probs = []
 
-        for fair_odd in fair_odds:
+        for i, market_odd in enumerate(market_odds):
+            fair_odd = fair_odds[i]
             win_prob = implied_probability(fair_odd)
             win_probs.append(win_prob)
             results.append({
-                'market_odds': bet_odds or fair_odd,
+                'market_odds': market_odd,
                 'fair_odds': fair_odd,
                 'win': win_prob,
             })
 
         combined_fair_odds = calculate_parlay_odds(fair_odds)
-        combined_win_prob = np.prod(win_probs)
-
-        if bet_odds is None:
-            bet_odds = fair_odds[0] if len(fair_odds) == 1 else calculate_parlay_odds(fair_odds)
+        combined_win_prob = win_probs[0] if len(win_probs) == 1 else np.prod(win_probs)
 
         ev = calculate_ev(combined_win_prob, bet_odds)
         kelly = kelly_criterion(combined_win_prob, bet_odds) * kelly_type.value
