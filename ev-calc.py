@@ -48,16 +48,19 @@ def american_to_decimal(odds: int) -> float:
 def implied_probability(odds: int) -> float:
     return abs(odds) / (abs(odds) + 100) if odds < 0 else 100 / (odds + 100)
 
-def devig_two_way_market(odds: List[int]) -> List[int]:
+def devig_two_way_market(odds: List[int]) -> List[float]:
     if len(odds) != 2:
         raise ValueError("Two-way market should have exactly two odds")
     
+    # Convert American odds to implied probabilities
     prob1 = implied_probability(odds[0])
     prob2 = implied_probability(odds[1])
     
+    # Calculate the true probabilities
     true_prob1 = prob1 / (prob1 + prob2)
     true_prob2 = prob2 / (prob1 + prob2)
     
+    # Convert true probabilities back to American odds
     fair_odds1 = decimal_to_american(1 / true_prob1)
     fair_odds2 = decimal_to_american(1 / true_prob2)
     
@@ -300,27 +303,14 @@ async def ev(interaction: discord.Interaction, odds: str, bet_odds: int = None, 
         user_id = str(interaction.user.id)
         user_settings = user_data.get(user_id, {})
         
-        if devig_method:
-            if devig_method not in DevigMethod.__members__:
-                await interaction.response.send_message(f"Invalid devig method: {devig_method}. Valid options are: {', '.join(DevigMethod.__members__.keys())}", ephemeral=True)
-                return
-            devig_method = DevigMethod[devig_method]
-        else:
-            devig_method = DevigMethod(user_settings.get("devig_method", DevigMethod.wc.value))
-        
-        if kelly:
-            if kelly not in KellyType.__members__:
-                await interaction.response.send_message(f"Invalid Kelly type: {kelly}. Valid options are: {', '.join(KellyType.__members__.keys())}", ephemeral=True)
-                return
-            kelly_type = KellyType[kelly]
-        else:
-            kelly_type = KellyType[user_settings.get("kelly", "QK")]
+        kelly_type = KellyType[kelly] if kelly else KellyType[user_settings.get("kelly", "QK")]
         
         user_bankroll = user_settings.get("bankroll") if user_settings.get("bankroll_enabled", True) else None
 
         if is_two_way:
             fair_odds = devig_two_way_market(market_odds)
         else:
+            devig_method = DevigMethod[devig_method] if devig_method else DevigMethod(user_settings.get("devig_method", DevigMethod.wc.value))
             fair_odds = devig(market_odds, devig_method)
 
         results = []
@@ -332,7 +322,7 @@ async def ev(interaction: discord.Interaction, odds: str, bet_odds: int = None, 
             win_probs.append(win_prob)
             results.append({
                 'market_odds': market_odd,
-                'fair_odds': fair_odd,
+                'fair_odds': round(fair_odd),  # Round to nearest integer
                 'win': win_prob,
             })
 
@@ -344,7 +334,7 @@ async def ev(interaction: discord.Interaction, odds: str, bet_odds: int = None, 
         wager_amount = kelly * user_bankroll if user_bankroll else None
 
         is_parlay = len(results) > 1
-        embed = create_embed(results, ev, kelly, kelly_type, wager_amount, combined_fair_odds, combined_win_prob, devig_method, user_bankroll, is_parlay, bet_odds)
+        embed = create_embed(results, ev, kelly, kelly_type, wager_amount, combined_fair_odds, combined_win_prob, devig_method if not is_two_way else None, user_bankroll, is_parlay, bet_odds)
         
         await interaction.response.send_message(embed=embed)
 
