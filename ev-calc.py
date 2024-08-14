@@ -89,7 +89,22 @@ def parse_two_way_odds(odds_str: str) -> Tuple[int, int]:
     odds = odds_str.split('/')
     if len(odds) != 2:
         raise ValueError("Invalid two-way odds format. Use 'odds1/odds2'")
-    return int(odds[0]), int(odds[1])
+    
+    parsed_odds = []
+    for odd in odds:
+        odd = odd.strip()
+        if odd.startswith('avg(') and odd.endswith(')'):
+            parsed_odds.append(parse_avg(odd))
+        else:
+            parsed_odds.append(int(odd))
+    
+    return tuple(parsed_odds)
+
+def parse_avg(avg_str):
+    numbers = re.findall(r'-?\d+', avg_str)
+    if not numbers:
+        raise ValueError(f"Invalid avg format: {avg_str}")
+    return int(sum(map(int, numbers)) / len(numbers))
 
 def expected_value(win_probability: float, bet_odds: int) -> float:
     decimal_odds = american_to_decimal(bet_odds)
@@ -332,7 +347,6 @@ async def on_message(message):
 )
 async def ev(interaction: discord.Interaction, odds: str, bet_odds: int = None, kelly: str = None, devig_method: str = None):
     try:
-        # Check if the input contains two-way market odds
         if '/' in odds:
             legs = [leg.strip() for leg in odds.split(',')]
             results = []
