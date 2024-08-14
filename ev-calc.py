@@ -48,6 +48,9 @@ def decimal_to_american(decimal_odds: float) -> int:
     else:
         return int(-100 / (decimal_odds - 1))
 
+def calculate_win_prob_from_fair_odds(fair_odds: int) -> float:
+    return implied_probability(fair_odds)
+
 def parse_two_way_odds(odds_str: str) -> Tuple[int, int]:
     odds = odds_str.split('/')
     if len(odds) != 2:
@@ -60,9 +63,7 @@ def remove_vig_two_way(odds1: int, odds2: int) -> Tuple[float, float]:
     total_prob = prob1 + prob2
     fair_prob1 = prob1 / total_prob
     fair_prob2 = prob2 / total_prob
-    fair_decimal1 = 1 / fair_prob1
-    fair_decimal2 = 1 / fair_prob2
-    return decimal_to_american(fair_decimal1), decimal_to_american(fair_decimal2)
+    return fair_prob1, fair_prob2
 
 def create_devig_embed(market_odds1: int, market_odds2: int, fair_odds1: int, fair_odds2: int) -> discord.Embed:
     embed = discord.Embed(color=EMBED_COLOR)
@@ -81,12 +82,21 @@ def create_devig_embed(market_odds1: int, market_odds2: int, fair_odds1: int, fa
     
     return embed
 
-def calculate_parlay_odds(odds_list: List[int]) -> int:
-    decimal_odds = [american_to_decimal(odds) for odds in odds_list]
-    parlay_decimal = 1
-    for odds in decimal_odds:
-        parlay_decimal *= odds
-    return decimal_to_american(parlay_decimal)
+def create_multi_leg_devig_embed(results: List[Dict]) -> discord.Embed:
+    embed = discord.Embed(color=EMBED_COLOR)
+    
+    for result in results:
+        leg_number = result['leg']
+        comparison = (
+            f"Market Odds      Fair Odds\n"
+            f"{result['market_prob1']*100:05.2f}%: {format_odds(result['market_odds1']):>5}    "
+            f"{result['fair_prob1']*100:05.2f}%: {format_odds(result['fair_odds1']):>5}{PADDING}\n"
+            f"{result['market_prob2']*100:05.2f}%: {format_odds(result['market_odds2']):>5}    "
+            f"{result['fair_prob2']*100:05.2f}%: {format_odds(result['fair_odds2']):>5}{PADDING}\n"
+        )
+        embed.add_field(name=f"Leg #{leg_number}", value=f"```\n{comparison}\n```", inline=False)
+    
+    return embed
 
 def expected_value(win_probability: float, bet_odds: int) -> float:
     decimal_odds = american_to_decimal(bet_odds)
@@ -97,6 +107,13 @@ def kelly_criterion(win_probability: float, bet_odds: int) -> float:
     if decimal_odds == 1 or win_probability == 1:
         return 0
     return max(0, (win_probability * decimal_odds - 1) / (decimal_odds - 1))
+
+def calculate_parlay_odds(odds_list: List[int]) -> int:
+    decimal_odds = [american_to_decimal(odds) for odds in odds_list]
+    parlay_decimal = 1
+    for odds in decimal_odds:
+        parlay_decimal *= odds
+    return decimal_to_american(parlay_decimal)
 
 def calculate_parlay_ev(win_probs: List[float], bet_odds: int) -> float:
     combined_prob = np.prod(win_probs)
@@ -111,9 +128,6 @@ def parse_odds(odds_str: str) -> Tuple[List[int], int]:
         bet_odds = None
         fair_odds = [int(x) for x in parts[0].split(',')]
     return fair_odds, bet_odds
-
-def calculate_win_prob_from_fair_odds(fair_odds: int) -> float:
-    return implied_probability(fair_odds)
 
 def worst_case_devig(odds: List[int]) -> List[float]:
     probs = [implied_probability(odd) for odd in odds]
@@ -179,11 +193,8 @@ def devig(odds: List[int], method: DevigMethod = DevigMethod.wc) -> List[float]:
 def calculate_ev(win_prob: float, odds: int) -> float:
     return (win_prob * american_to_decimal(odds)) - 1
 
-def format_odds(odds: Union[int, str]) -> str:
-    try:
-        return f"+{odds}" if int(odds) > 0 else f"{odds}"
-    except ValueError:
-        return str(odds)
+def format_odds(odds: Union[int, float]) -> str:
+    return f"+{odds}" if odds > 0 else f"{odds}"
 
 def format_ev(ev: float) -> str:
     return f"{ev:05.2f}%" if ev >= 0 else f"{ev:06.2f}%"
@@ -305,11 +316,32 @@ async def on_message(message):
 )
 async def ev(interaction: discord.Interaction, odds: str, bet_odds: int = None, kelly: str = None, devig_method: str = None):
     try:
-        # Check if the input is two-way market odds
-        if '/' in odds and ',' not in odds:
-            market_odds1, market_odds2 = parse_two_way_odds(odds)
-            fair_odds1, fair_odds2 = remove_vig_two_way(market_odds1, market_odds2)
-            embed = create_devig_embed(market_odds1, market_odds2, fair_odds1, fair_odds2)
+        # Check if the input contains two-way market odds
+        if '/' in odds:
+            legs = odds.split(',')
+            results = []
+            for i, leg in enumerate(legs, 1):
+                leg = leg.strip()
+                if '/' in leg:
+                    market_odds1, market_odds2 = parse_two_way_odds(leg)
+                    fair_prob1, fair_prob2 = remove_vig_two_way(market_odds1, market_odds2)
+                    fair_odds1 = decimal_to_american(1 / fair_prob1)
+                    fair_odds2 = decimal_to_american(1 / fair_prob2)
+                    results.append({
+                        'leg': i,
+                        'market_odds1': market_odds1,
+                        'market_odds2': market_odds2,
+                        'fair_odds1': fair_odds1,
+                        'fair_odds2': fair_odds2,
+                        'market_prob1': implied_probability(market_odds1),
+                        'market_prob2': implied_probability(market_odds2),
+                        'fair_prob1': fair_prob1,
+                        'fair_prob2': fair_prob2
+                    })
+                else:
+                    raise ValueError(f"Invalid format for leg {i}: {leg}")
+            
+            embed = create_multi_leg_devig_embed(results)
             await interaction.response.send_message(embed=embed)
             return
 
