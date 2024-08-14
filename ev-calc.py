@@ -348,9 +348,10 @@ async def on_message(message):
 async def ev(interaction: discord.Interaction, odds: str, bet_odds: int = None, kelly: str = None, devig_method: str = None):
     try:
         if '/' in odds:
-            legs = [leg.strip() for leg in odds.split(',')]
+            legs = re.split(r',\s*(?![^()]*\))', odds)
             results = []
             for i, leg in enumerate(legs, 1):
+                leg = leg.strip()
                 if '/' in leg:
                     market_odds1, market_odds2 = parse_two_way_odds(leg)
                     fair_prob1, fair_prob2, fair_odds1, fair_odds2 = remove_vig_two_way(market_odds1, market_odds2)
