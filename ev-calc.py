@@ -48,55 +48,48 @@ def decimal_to_american(decimal_odds: float) -> int:
     else:
         return int(-100 / (decimal_odds - 1))
 
+def round_american_odds(decimal_odds: float) -> int:
+    american = decimal_to_american(decimal_odds)
+    if abs(american) <= 200:
+        return round(american / 5) * 5
+    else:
+        return round(american / 10) * 10
+
 def calculate_win_prob_from_fair_odds(fair_odds: int) -> float:
     return implied_probability(fair_odds)
+
+def remove_vig_two_way(odds1: int, odds2: int) -> Tuple[float, float, int, int]:
+    prob1 = implied_probability(odds1)
+    prob2 = implied_probability(odds2)
+    total_prob = prob1 + prob2
+    fair_prob1 = prob1 / total_prob
+    fair_prob2 = prob2 / total_prob
+    
+    # Convert probabilities to American odds
+    fair_decimal1 = 1 / fair_prob1
+    fair_decimal2 = 1 / fair_prob2
+    
+    # Round to nearest 5 or 10 for American odds
+    fair_american1 = round_american_odds(fair_decimal1)
+    fair_american2 = round_american_odds(fair_decimal2)
+    
+    return fair_prob1, fair_prob2, fair_american1, fair_american2
+
+def parse_odds(odds_str: str) -> Tuple[List[int], int]:
+    parts = odds_str.split(':')
+    if len(parts) == 2:
+        bet_odds = int(parts[1])
+        fair_odds = [int(x) for x in parts[0].split(',')]
+    else:
+        bet_odds = None
+        fair_odds = [int(x) for x in parts[0].split(',')]
+    return fair_odds, bet_odds
 
 def parse_two_way_odds(odds_str: str) -> Tuple[int, int]:
     odds = odds_str.split('/')
     if len(odds) != 2:
         raise ValueError("Invalid two-way odds format. Use 'odds1/odds2'")
     return int(odds[0]), int(odds[1])
-
-def remove_vig_two_way(odds1: int, odds2: int) -> Tuple[float, float]:
-    prob1 = implied_probability(odds1)
-    prob2 = implied_probability(odds2)
-    total_prob = prob1 + prob2
-    fair_prob1 = prob1 / total_prob
-    fair_prob2 = prob2 / total_prob
-    return fair_prob1, fair_prob2
-
-def create_devig_embed(market_odds1: int, market_odds2: int, fair_odds1: int, fair_odds2: int) -> discord.Embed:
-    embed = discord.Embed(color=EMBED_COLOR)
-    
-    market_prob1 = implied_probability(market_odds1)
-    market_prob2 = implied_probability(market_odds2)
-    fair_prob1 = implied_probability(fair_odds1)
-    fair_prob2 = implied_probability(fair_odds2)
-    
-    comparison = (
-        f"Market Odds      Fair Odds\n"
-        f"{market_prob1*100:05.2f}%: {format_odds(market_odds1):>5}    {fair_prob1*100:05.2f}%: {format_odds(fair_odds1):>5}{PADDING}\n"
-        f"{market_prob2*100:05.2f}%: {format_odds(market_odds2):>5}    {fair_prob2*100:05.2f}%: {format_odds(fair_odds2):>5}{PADDING}\n"
-    )
-    embed.add_field(name="Comparison", value=f"```\n{comparison}\n```", inline=False)
-    
-    return embed
-
-def create_multi_leg_devig_embed(results: List[Dict]) -> discord.Embed:
-    embed = discord.Embed(color=EMBED_COLOR)
-    
-    for result in results:
-        leg_number = result['leg']
-        comparison = (
-            f"Market Odds      Fair Odds\n"
-            f"{result['market_prob1']*100:05.2f}%: {format_odds(result['market_odds1']):>5}    "
-            f"{result['fair_prob1']*100:05.2f}%: {format_odds(result['fair_odds1']):>5}{PADDING}\n"
-            f"{result['market_prob2']*100:05.2f}%: {format_odds(result['market_odds2']):>5}    "
-            f"{result['fair_prob2']*100:05.2f}%: {format_odds(result['fair_odds2']):>5}{PADDING}\n"
-        )
-        embed.add_field(name=f"Leg #{leg_number}", value=f"```\n{comparison}\n```", inline=False)
-    
-    return embed
 
 def expected_value(win_probability: float, bet_odds: int) -> float:
     decimal_odds = american_to_decimal(bet_odds)
@@ -118,16 +111,6 @@ def calculate_parlay_odds(odds_list: List[int]) -> int:
 def calculate_parlay_ev(win_probs: List[float], bet_odds: int) -> float:
     combined_prob = np.prod(win_probs)
     return expected_value(combined_prob, bet_odds)
-
-def parse_odds(odds_str: str) -> Tuple[List[int], int]:
-    parts = odds_str.split(':')
-    if len(parts) == 2:
-        bet_odds = int(parts[1])
-        fair_odds = [int(x) for x in parts[0].split(',')]
-    else:
-        bet_odds = None
-        fair_odds = [int(x) for x in parts[0].split(',')]
-    return fair_odds, bet_odds
 
 def worst_case_devig(odds: List[int]) -> List[float]:
     probs = [implied_probability(odd) for odd in odds]
@@ -227,6 +210,39 @@ def create_embed(results: List[Dict[str, Union[int, float]]], ev: float, kelly: 
             f"{(1-true_prob)*100:05.2f}%: {format_odds(decimal_to_american(1/(1-true_prob))):>5}{PADDING}\n"
         )
         embed.add_field(name=title, value=f"```\n{combined_odds}\n```", inline=False)
+    
+    return embed
+
+def create_devig_embed(market_odds1: int, market_odds2: int, fair_odds1: int, fair_odds2: int) -> discord.Embed:
+    embed = discord.Embed(color=EMBED_COLOR)
+    
+    market_prob1 = implied_probability(market_odds1)
+    market_prob2 = implied_probability(market_odds2)
+    fair_prob1 = implied_probability(fair_odds1)
+    fair_prob2 = implied_probability(fair_odds2)
+    
+    comparison = (
+        f"Market Odds      Fair Odds\n"
+        f"{market_prob1*100:05.2f}%: {format_odds(market_odds1):>5}    {fair_prob1*100:05.2f}%: {format_odds(fair_odds1):>5}{PADDING}\n"
+        f"{market_prob2*100:05.2f}%: {format_odds(market_odds2):>5}    {fair_prob2*100:05.2f}%: {format_odds(fair_odds2):>5}{PADDING}\n"
+    )
+    embed.add_field(name="Comparison", value=f"```\n{comparison}\n```", inline=False)
+    
+    return embed
+
+def create_multi_leg_devig_embed(results: List[Dict]) -> discord.Embed:
+    embed = discord.Embed(color=EMBED_COLOR, title="Devigged Odds")
+    
+    for result in results:
+        leg_number = result['leg']
+        comparison = (
+            f"Market Odds      Fair Odds\n"
+            f"{result['market_prob1']*100:05.2f}%: {format_odds(result['market_odds1']):>5}    "
+            f"{result['fair_prob1']*100:05.2f}%: {format_odds(result['fair_odds1']):>5}{PADDING}\n"
+            f"{result['market_prob2']*100:05.2f}%: {format_odds(result['market_odds2']):>5}    "
+            f"{result['fair_prob2']*100:05.2f}%: {format_odds(result['fair_odds2']):>5}{PADDING}\n"
+        )
+        embed.add_field(name=f"Leg #{leg_number}", value=f"```\n{comparison}\n```", inline=False)
     
     return embed
 
