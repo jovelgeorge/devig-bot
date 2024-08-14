@@ -231,7 +231,7 @@ def create_devig_embed(market_odds1: int, market_odds2: int, fair_odds1: int, fa
     return embed
 
 def create_multi_leg_devig_embed(results: List[Dict]) -> discord.Embed:
-    embed = discord.Embed(color=EMBED_COLOR, title="Devigged Odds")
+    embed = discord.Embed(color=EMBED_COLOR)
     
     for result in results:
         leg_number = result['leg']
@@ -334,15 +334,12 @@ async def ev(interaction: discord.Interaction, odds: str, bet_odds: int = None, 
     try:
         # Check if the input contains two-way market odds
         if '/' in odds:
-            legs = odds.split(',')
+            legs = [leg.strip() for leg in odds.split(',')]
             results = []
             for i, leg in enumerate(legs, 1):
-                leg = leg.strip()
                 if '/' in leg:
                     market_odds1, market_odds2 = parse_two_way_odds(leg)
-                    fair_prob1, fair_prob2 = remove_vig_two_way(market_odds1, market_odds2)
-                    fair_odds1 = decimal_to_american(1 / fair_prob1)
-                    fair_odds2 = decimal_to_american(1 / fair_prob2)
+                    fair_prob1, fair_prob2, fair_odds1, fair_odds2 = remove_vig_two_way(market_odds1, market_odds2)
                     results.append({
                         'leg': i,
                         'market_odds1': market_odds1,
@@ -357,11 +354,14 @@ async def ev(interaction: discord.Interaction, odds: str, bet_odds: int = None, 
                 else:
                     raise ValueError(f"Invalid format for leg {i}: {leg}")
             
-            embed = create_multi_leg_devig_embed(results)
+            if len(results) == 1:
+                embed = create_devig_embed(results[0]['market_odds1'], results[0]['market_odds2'], 
+                                           results[0]['fair_odds1'], results[0]['fair_odds2'])
+            else:
+                embed = create_multi_leg_devig_embed(results)
             await interaction.response.send_message(embed=embed)
             return
 
-        # Handle multi-leg odds
         odds = re.sub(r'avg\([^)]+\)', lambda m: str(int(sum(float(x.strip()) for x in m.group()[4:-1].split(',')) / len(m.group()[4:-1].split(',')))), odds)
         
         fair_odds, parsed_bet_odds = parse_odds(odds)
