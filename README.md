@@ -1,6 +1,6 @@
 # devig & EV calculator
 
-This bot calculates expected value (EV) for sports betting odds.
+open-source discord bot that calculates no-vig and expected value (EV) for sports betting odds/wagers.
 
 ## setup
 
