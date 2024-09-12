@@ -331,9 +331,7 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    parts = [part.strip() for part in message.content.split(':')]
-
-    if len(parts) in [1, 2, 3]:
+    if re.match(r'^\d+([,:]\d+(/\d+%?)?)?$', message.content.strip()):
         try:
             fair_odds, bet_odds, hold_percentage = parse_odds(message.content)
 
@@ -349,14 +347,21 @@ async def on_message(message):
             for fair_odd in fair_odds:
                 win_prob = implied_probability(fair_odd)
                 win_probs.append(win_prob)
+                
+                if hold_percentage is not None:
+                    fv_odds = calculate_fair_value(bet_odds, fair_odd, hold_percentage)
+                else:
+                    fv_odds = fair_odd
+
                 results.append({
                     'market_odds': bet_odds or fair_odd,
                     'fair_odds': fair_odd,
-                    'win': win_prob,
+                    'fv_odds': fv_odds,
+                    'win': implied_probability(fv_odds),
                 })
 
-            combined_fair_odds = calculate_parlay_odds(fair_odds)
-            combined_win_prob = np.prod(win_probs)
+            combined_fair_odds = calculate_parlay_odds([r['fv_odds'] for r in results])
+            combined_win_prob = np.prod([r['win'] for r in results])
 
             if bet_odds is None:
                 bet_odds = fair_odds[0] if len(fair_odds) == 1 else calculate_parlay_odds(fair_odds)
