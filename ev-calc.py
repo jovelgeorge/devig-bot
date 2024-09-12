@@ -190,23 +190,26 @@ def devig(odds: List[int], method: DevigMethod = DevigMethod.wc) -> List[float]:
 
 def parse_odds(odds_str: str) -> Tuple[List[int], int, float]:
     parts = odds_str.split(':')
-    if len(parts) == 3:
-        bet_odds = int(parts[1])
+    if len(parts) == 2:
         fair_odds = [int(x) for x in parts[0].split(',')]
+        bet_odds_parts = parts[1].split('/')
+        bet_odds = int(bet_odds_parts[0])
+        hold_percentage = float(bet_odds_parts[1].rstrip('%')) if len(bet_odds_parts) > 1 else None
+    elif len(parts) == 3:
+        fair_odds = [int(x) for x in parts[0].split(',')]
+        bet_odds = int(parts[1])
         try:
             hold_percentage = float(parts[2].rstrip('%'))
-            if hold_percentage < 0 or hold_percentage > 100:
-                raise ValueError("Hold percentage must be between 0 and 100")
         except ValueError:
             raise ValueError("Invalid hold percentage format. Use a number between 0 and 100.")
-    elif len(parts) == 2:
-        bet_odds = int(parts[1])
-        fair_odds = [int(x) for x in parts[0].split(',')]
-        hold_percentage = None
     else:
-        bet_odds = None
         fair_odds = [int(x) for x in parts[0].split(',')]
+        bet_odds = None
         hold_percentage = None
+    
+    if hold_percentage is not None and (hold_percentage < 0 or hold_percentage > 100):
+        raise ValueError("Hold percentage must be between 0 and 100")
+    
     return fair_odds, bet_odds, hold_percentage
 
 def parse_two_way_odds(odds_str: str) -> Tuple[int, int]:
