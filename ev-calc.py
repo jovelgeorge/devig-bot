@@ -55,15 +55,6 @@ def round_american_odds(decimal_odds: float) -> int:
     else:
         return round(american / 10) * 10
 
-def probability_to_american_odds(probability: float) -> int:
-    """Convert a probability to American odds."""
-    if probability <= 0 or probability >= 1:
-        raise ValueError("Probability must be between 0 and 1")
-    if probability > 0.5:
-        return int(round(-100 / (probability - 1)))
-    else:
-        return int(round((1 / probability - 1) * 100))
-
 def calculate_win_prob_from_fair_odds(fair_odds: int) -> float:
     return implied_probability(fair_odds)
 
@@ -84,24 +75,36 @@ def remove_vig_two_way(odds1: int, odds2: int) -> Tuple[float, float, int, int]:
     
     return fair_prob1, fair_prob2, fair_american1, fair_american2
 
-def calculate_hold(odds_list: List[int]) -> float:
-    """Calculate the hold percentage from a list of odds."""
-    probabilities = [implied_probability(odds) for odds in odds_list]
-    total_probability = sum(probabilities)
-    hold = (total_probability - 1) * 100
-    return hold
+def parse_odds(odds_str: str) -> Tuple[List[int], int]:
+    parts = odds_str.split(':')
+    if len(parts) == 2:
+        bet_odds = int(parts[1])
+        fair_odds = [int(x) for x in parts[0].split(',')]
+    else:
+        bet_odds = None
+        fair_odds = [int(x) for x in parts[0].split(',')]
+    return fair_odds, bet_odds
 
-def remove_hold_from_odds(odds: int, hold_percentage: float) -> int:
-    """Remove the hold from given odds."""
-    probability = implied_probability(odds)
-    true_probability = probability / (1 + hold_percentage / 100)
-    return probability_to_american_odds(true_probability)
+def parse_two_way_odds(odds_str: str) -> Tuple[int, int]:
+    odds = odds_str.split('/')
+    if len(odds) != 2:
+        raise ValueError("Invalid two-way odds format. Use 'odds1/odds2'")
+    
+    parsed_odds = []
+    for odd in odds:
+        odd = odd.strip()
+        if odd.startswith('avg(') and odd.endswith(')'):
+            parsed_odds.append(parse_avg(odd))
+        else:
+            parsed_odds.append(int(odd))
+    
+    return tuple(parsed_odds)
 
-def calculate_fair_value(market_odds: int, fair_odds: int, hold_percentage: float) -> int:
-    """Calculate the fair value odds."""
-    market_prob = implied_probability(market_odds)
-    true_market_prob = market_prob / (1 + hold_percentage / 100)
-    return probability_to_american_odds(true_market_prob)
+def parse_avg(avg_str):
+    numbers = re.findall(r'-?\d+', avg_str)
+    if not numbers:
+        raise ValueError(f"Invalid avg format: {avg_str}")
+    return int(sum(map(int, numbers)) / len(numbers))
 
 def expected_value(win_probability: float, bet_odds: int) -> float:
     decimal_odds = american_to_decimal(bet_odds)
@@ -123,9 +126,6 @@ def calculate_parlay_odds(odds_list: List[int]) -> int:
 def calculate_parlay_ev(win_probs: List[float], bet_odds: int) -> float:
     combined_prob = np.prod(win_probs)
     return expected_value(combined_prob, bet_odds)
-
-def calculate_ev(win_prob: float, odds: int) -> float:
-    return (win_prob * american_to_decimal(odds)) - 1
 
 def worst_case_devig(odds: List[int]) -> List[float]:
     probs = [implied_probability(odd) for odd in odds]
@@ -188,52 +188,8 @@ def devig(odds: List[int], method: DevigMethod = DevigMethod.wc) -> List[float]:
         print(f"Error in devigging with method {method.name}: {str(e)}")
         return worst_case_devig(odds)
 
-def parse_odds(odds_str: str) -> Tuple[List[int], int, float]:
-    parts = odds_str.split(':')
-    if len(parts) == 2:
-        bet_odds = int(parts[0])
-        fair_odds_parts = parts[1].split('/')
-        fair_odds = [int(fair_odds_parts[0])]
-        hold_percentage = float(fair_odds_parts[1].rstrip('%')) if len(fair_odds_parts) > 1 else None
-    elif len(parts) == 3:
-        bet_odds = int(parts[0])
-        fair_odds = [int(parts[1])]
-        try:
-            hold_percentage = float(parts[2].rstrip('%'))
-        except ValueError:
-            raise ValueError("Invalid hold percentage format. Use a number between 0 and 100.")
-    elif len(parts) == 1:
-        bet_odds = int(parts[0])
-        fair_odds = [bet_odds]
-        hold_percentage = None
-    else:
-        raise ValueError("Invalid input format")
-    
-    if hold_percentage is not None and (hold_percentage < 0 or hold_percentage > 100):
-        raise ValueError("Hold percentage must be between 0 and 100")
-    
-    return fair_odds, bet_odds, hold_percentage
-
-def parse_two_way_odds(odds_str: str) -> Tuple[int, int]:
-    odds = odds_str.split('/')
-    if len(odds) != 2:
-        raise ValueError("Invalid two-way odds format. Use 'odds1/odds2'")
-    
-    parsed_odds = []
-    for odd in odds:
-        odd = odd.strip()
-        if odd.startswith('avg(') and odd.endswith(')'):
-            parsed_odds.append(parse_avg(odd))
-        else:
-            parsed_odds.append(int(odd))
-    
-    return tuple(parsed_odds)
-
-def parse_avg(avg_str):
-    numbers = re.findall(r'-?\d+', avg_str)
-    if not numbers:
-        raise ValueError(f"Invalid avg format: {avg_str}")
-    return int(sum(map(int, numbers)) / len(numbers))
+def calculate_ev(win_prob: float, odds: int) -> float:
+    return (win_prob * american_to_decimal(odds)) - 1
 
 def format_odds(odds: Union[int, float]) -> str:
     return f"+{odds}" if odds > 0 else f"{odds}"
@@ -244,7 +200,8 @@ def format_ev(ev: float) -> str:
 def create_embed(results: List[Dict[str, Union[int, float]]], ev: float, kelly: float, kelly_type: KellyType, wager_amount: float, combined_fair_odds: int, combined_win_prob: float, devig_method: DevigMethod, user_bankroll: float = None, is_parlay: bool = False, bet_odds: int = None) -> discord.Embed:
     embed = discord.Embed(color=EMBED_COLOR)
     
-    embed.add_field(name="Bet Odds", value=f"```\n{format_odds(bet_odds)}{PADDING}\n```", inline=False)
+    display_odds = bet_odds if bet_odds is not None else results[0]['market_odds']
+    embed.add_field(name="Bet Odds", value=f"```\n{format_odds(display_odds)}{PADDING}\n```", inline=False)
     
     if wager_amount is not None:
         embed.add_field(name=f"Wager Amount ({kelly_type.name})", value=f"```\n${wager_amount:.2f}{PADDING}\n```", inline=False)
@@ -260,12 +217,12 @@ def create_embed(results: List[Dict[str, Union[int, float]]], ev: float, kelly: 
         title = f"Leg {i+1}" if is_parlay else "Comparison"
 
         market_prob = implied_probability(result['market_odds'])
-        fv_prob = result['win']
+        true_prob = result['win']
         combined_odds = (
-            f"Market Odds      Fair Value Odds\n"
-            f"{market_prob*100:05.2f}%: {format_odds(result['market_odds']):>5}    {fv_prob*100:05.2f}%: {format_odds(result['fv_odds']):>5}{PADDING}\n"
+            f"Market Odds      Fair Odds\n"
+            f"{market_prob*100:05.2f}%: {format_odds(result['market_odds']):>5}    {true_prob*100:05.2f}%: {format_odds(result['fair_odds']):>5}{PADDING}\n"
             f"{(1-market_prob)*100:05.2f}%: {format_odds(decimal_to_american(1/(1-market_prob))):>5}    "
-            f"{(1-fv_prob)*100:05.2f}%: {format_odds(decimal_to_american(1/(1-fv_prob))):>5}{PADDING}\n"
+            f"{(1-true_prob)*100:05.2f}%: {format_odds(decimal_to_american(1/(1-true_prob))):>5}{PADDING}\n"
         )
         embed.add_field(name=title, value=f"```\n{combined_odds}\n```", inline=False)
     
@@ -332,9 +289,21 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    if re.match(r'^-?\d+([,:]+-?\d+(/\d+(\.\d+)?%?)?)?$', message.content.strip()):
-        try:
-            fair_odds, bet_odds, hold_percentage = parse_odds(message.content)
+    parts = [part.strip() for part in message.content.split(':')]
+
+    if len(parts) == 2:
+        bet_odds_str, fair_odds_str = parts
+
+        def is_valid_odds(odds_str):
+            try:
+                odds = int(odds_str)
+                return odds <= -100 or odds >= 100
+            except ValueError:
+                return False
+
+        if is_valid_odds(bet_odds_str) and all(is_valid_odds(odd) for odd in fair_odds_str.split(',')):
+            bet_odds = int(bet_odds_str)
+            fair_odds = [int(x) for x in fair_odds_str.split(',')]
 
             user_id = str(message.author.id)
             user_settings = user_data.get(user_id, {})
@@ -348,21 +317,14 @@ async def on_message(message):
             for fair_odd in fair_odds:
                 win_prob = implied_probability(fair_odd)
                 win_probs.append(win_prob)
-                
-                if hold_percentage is not None:
-                    fv_odds = calculate_fair_value(bet_odds, fair_odd, hold_percentage)
-                else:
-                    fv_odds = fair_odd
-
                 results.append({
                     'market_odds': bet_odds,
                     'fair_odds': fair_odd,
-                    'fv_odds': fv_odds,
-                    'win': implied_probability(fv_odds),
+                    'win': win_prob,
                 })
 
-            combined_fair_odds = calculate_parlay_odds([r['fv_odds'] for r in results])
-            combined_win_prob = np.prod([r['win'] for r in results])
+            combined_fair_odds = calculate_parlay_odds(fair_odds)
+            combined_win_prob = np.prod(win_probs)
 
             ev = calculate_ev(combined_win_prob, bet_odds)
             kelly = kelly_criterion(combined_win_prob, bet_odds) * kelly_type.value
@@ -372,9 +334,6 @@ async def on_message(message):
             embed = create_embed(results, ev, kelly, kelly_type, wager_amount, combined_fair_odds, combined_win_prob, devig_method, user_bankroll, is_parlay, bet_odds)
 
             await message.channel.send(embed=embed)
-
-        except Exception as e:
-            await message.channel.send(f"An error occurred: {str(e)}")
 
     await bot.process_commands(message)
 
@@ -420,7 +379,7 @@ async def ev(interaction: discord.Interaction, odds: str, bet_odds: int = None, 
 
         odds = re.sub(r'avg\([^)]+\)', lambda m: str(int(sum(float(x.strip()) for x in m.group()[4:-1].split(',')) / len(m.group()[4:-1].split(',')))), odds)
         
-        fair_odds, parsed_bet_odds, hold_percentage = parse_odds(odds)
+        fair_odds, parsed_bet_odds = parse_odds(odds)
         bet_odds = bet_odds or parsed_bet_odds
 
         user_id = str(interaction.user.id)
