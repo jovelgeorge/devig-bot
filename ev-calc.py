@@ -65,11 +65,9 @@ def remove_vig_two_way(odds1: int, odds2: int) -> Tuple[float, float, int, int]:
     fair_prob1 = prob1 / total_prob
     fair_prob2 = prob2 / total_prob
     
-    # Convert probabilities to American odds
     fair_decimal1 = 1 / fair_prob1
     fair_decimal2 = 1 / fair_prob2
     
-    # Round to nearest 5 or 10 for American odds
     fair_american1 = round_american_odds(fair_decimal1)
     fair_american2 = round_american_odds(fair_decimal2)
     
@@ -289,51 +287,60 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    parts = [part.strip() for part in message.content.split(':')]
+    content = message.content.strip()
+    if ':' in content:
+        parts = [part.strip() for part in content.split(':')]
+        
+        if len(parts) == 2:
+            bet_odds_str, fair_odds_str = parts
 
-    if len(parts) == 2:
-        bet_odds_str, fair_odds_str = parts
+            def is_valid_odds(odds_str):
+                try:
+                    odds = int(odds_str)
+                    return odds <= -100 or odds >= 100
+                except ValueError:
+                    return False
 
-        def is_valid_odds(odds_str):
-            try:
-                odds = int(odds_str)
-                return odds <= -100 or odds >= 100
-            except ValueError:
-                return False
+            if is_valid_odds(bet_odds_str):
+                bet_odds = int(bet_odds_str)
+                
+                if '/' in fair_odds_str:
+                    # Handle two-way market odds
+                    market_odds1, market_odds2 = parse_two_way_odds(fair_odds_str)
+                    fair_prob1, fair_prob2, fair_odds1, fair_odds2 = remove_vig_two_way(market_odds1, market_odds2)
+                    fair_odds = [fair_odds1]
+                    combined_win_prob = fair_prob1
+                else:
+                    # Handle single or multiple fair odds
+                    fair_odds = [int(x) for x in fair_odds_str.split(',')]
+                    win_probs = [implied_probability(odd) for odd in fair_odds]
+                    combined_win_prob = np.prod(win_probs)
 
-        if is_valid_odds(bet_odds_str) and all(is_valid_odds(odd) for odd in fair_odds_str.split(',')):
-            bet_odds = int(bet_odds_str)
-            fair_odds = [int(x) for x in fair_odds_str.split(',')]
+                user_id = str(message.author.id)
+                user_settings = user_data.get(user_id, {})
+                devig_method = DevigMethod(user_settings.get("devig_method", DevigMethod.wc.value))
+                kelly_type = KellyType[user_settings.get("kelly", "QK")]
+                user_bankroll = user_settings.get("bankroll") if user_settings.get("bankroll_enabled", True) else None
 
-            user_id = str(message.author.id)
-            user_settings = user_data.get(user_id, {})
-            devig_method = DevigMethod(user_settings.get("devig_method", DevigMethod.wc.value))
-            kelly_type = KellyType[user_settings.get("kelly", "QK")]
-            user_bankroll = user_settings.get("bankroll") if user_settings.get("bankroll_enabled", True) else None
+                results = []
+                for fair_odd in fair_odds:
+                    win_prob = implied_probability(fair_odd)
+                    results.append({
+                        'market_odds': bet_odds,
+                        'fair_odds': fair_odd,
+                        'win': win_prob,
+                    })
 
-            results = []
-            win_probs = []
+                combined_fair_odds = calculate_parlay_odds(fair_odds)
 
-            for fair_odd in fair_odds:
-                win_prob = implied_probability(fair_odd)
-                win_probs.append(win_prob)
-                results.append({
-                    'market_odds': bet_odds,
-                    'fair_odds': fair_odd,
-                    'win': win_prob,
-                })
+                ev = calculate_ev(combined_win_prob, bet_odds)
+                kelly = kelly_criterion(combined_win_prob, bet_odds) * kelly_type.value
+                wager_amount = kelly * user_bankroll if user_bankroll else None
 
-            combined_fair_odds = calculate_parlay_odds(fair_odds)
-            combined_win_prob = np.prod(win_probs)
+                is_parlay = len(results) > 1
+                embed = create_embed(results, ev, kelly, kelly_type, wager_amount, combined_fair_odds, combined_win_prob, devig_method, user_bankroll, is_parlay, bet_odds)
 
-            ev = calculate_ev(combined_win_prob, bet_odds)
-            kelly = kelly_criterion(combined_win_prob, bet_odds) * kelly_type.value
-            wager_amount = kelly * user_bankroll if user_bankroll else None
-
-            is_parlay = len(results) > 1
-            embed = create_embed(results, ev, kelly, kelly_type, wager_amount, combined_fair_odds, combined_win_prob, devig_method, user_bankroll, is_parlay, bet_odds)
-
-            await message.channel.send(embed=embed)
+                await message.channel.send(embed=embed)
 
     await bot.process_commands(message)
 
@@ -347,41 +354,6 @@ async def on_message(message):
 )
 async def ev(interaction: discord.Interaction, odds: str, bet_odds: int = None, kelly: str = None, devig_method: str = None):
     try:
-        if '/' in odds:
-            legs = re.split(r',\s*(?![^()]*\))', odds)
-            results = []
-            for i, leg in enumerate(legs, 1):
-                leg = leg.strip()
-                if '/' in leg:
-                    market_odds1, market_odds2 = parse_two_way_odds(leg)
-                    fair_prob1, fair_prob2, fair_odds1, fair_odds2 = remove_vig_two_way(market_odds1, market_odds2)
-                    results.append({
-                        'leg': i,
-                        'market_odds1': market_odds1,
-                        'market_odds2': market_odds2,
-                        'fair_odds1': fair_odds1,
-                        'fair_odds2': fair_odds2,
-                        'market_prob1': implied_probability(market_odds1),
-                        'market_prob2': implied_probability(market_odds2),
-                        'fair_prob1': fair_prob1,
-                        'fair_prob2': fair_prob2
-                    })
-                else:
-                    raise ValueError(f"Invalid format for leg {i}: {leg}")
-            
-            if len(results) == 1:
-                embed = create_devig_embed(results[0]['market_odds1'], results[0]['market_odds2'], 
-                                           results[0]['fair_odds1'], results[0]['fair_odds2'])
-            else:
-                embed = create_multi_leg_devig_embed(results)
-            await interaction.response.send_message(embed=embed)
-            return
-
-        odds = re.sub(r'avg\([^)]+\)', lambda m: str(int(sum(float(x.strip()) for x in m.group()[4:-1].split(',')) / len(m.group()[4:-1].split(',')))), odds)
-        
-        fair_odds, parsed_bet_odds = parse_odds(odds)
-        bet_odds = bet_odds or parsed_bet_odds
-
         user_id = str(interaction.user.id)
         user_settings = user_data.get(user_id, {})
         
@@ -403,12 +375,21 @@ async def ev(interaction: discord.Interaction, odds: str, bet_odds: int = None, 
         
         user_bankroll = user_settings.get("bankroll") if user_settings.get("bankroll_enabled", True) else None
 
-        results = []
-        win_probs = []
+        if '/' in odds:
+            market_odds1, market_odds2 = parse_two_way_odds(odds)
+            fair_prob1, fair_prob2, fair_odds1, fair_odds2 = remove_vig_two_way(market_odds1, market_odds2)
+            fair_odds = [fair_odds1]
+            combined_win_prob = fair_prob1
+        else:
+            odds = re.sub(r'avg\([^)]+\)', lambda m: str(int(sum(float(x.strip()) for x in m.group()[4:-1].split(',')) / len(m.group()[4:-1].split(',')))), odds)
+            fair_odds, parsed_bet_odds = parse_odds(odds)
+            bet_odds = bet_odds or parsed_bet_odds
+            win_probs = [implied_probability(odd) for odd in fair_odds]
+            combined_win_prob = np.prod(win_probs)
 
+        results = []
         for fair_odd in fair_odds:
             win_prob = implied_probability(fair_odd)
-            win_probs.append(win_prob)
             results.append({
                 'market_odds': bet_odds or fair_odd,
                 'fair_odds': fair_odd,
@@ -416,7 +397,6 @@ async def ev(interaction: discord.Interaction, odds: str, bet_odds: int = None, 
             })
 
         combined_fair_odds = calculate_parlay_odds(fair_odds)
-        combined_win_prob = np.prod(win_probs)
 
         if bet_odds is None:
             bet_odds = fair_odds[0] if len(fair_odds) == 1 else calculate_parlay_odds(fair_odds)
